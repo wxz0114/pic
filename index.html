@@ -80,16 +80,17 @@ async function scanDir(path){
   return files.concat(...subs);
 }
 
+// Known year directories to scan (extend as needed)
+const KNOWN_DIRS=['2024','2025','2026','2027','2028'];
+
 async function loadFiles(){
   container.innerHTML='<p style="color:#fff;opacity:.6">扫描目录中…</p>';
   try{
-    // Scan from the directory where index.html resides
-    const base='./';
-    const entries=await fetchDirListing(base);
-    const dirs=entries.filter(e=>e.endsWith('/')&&!e.startsWith('.')&&e!=='../');
-    // Scan all subdirectories in parallel
-    const results=await Promise.all(dirs.map(d=>scanDir(base+d)));
-    FILES=results.flat().map(f=>f.replace(/^\.\//,'')).sort();
+    // Try each known directory in parallel; skip those that don't exist
+    const results=await Promise.all(KNOWN_DIRS.map(async d=>{
+      try{return await scanDir(d+'/')}catch(e){return[]}
+    }));
+    FILES=results.flat().sort();
   }catch(e){
     container.innerHTML='<p style="color:#fff;padding:20px">无法扫描目录。请确保服务器开启了目录列表（autoindex）。</p>';
     return;
