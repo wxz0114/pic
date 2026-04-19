@@ -46,25 +46,36 @@ const dirSelect=document.getElementById('dir-select');
 let filtered=[];
 let idx=0;
 
-// Parse directory listing HTML to extract links
-function parseLinks(html,base){
-  const links=[];
-  const re=/<a\s[^>]*href="([^"]+)"/gi;
+// Parse directory listing HTML to extract file/dir names
+function parseLinks(html){
+  const names=[];
+  const re=/<a\s[^>]*href="([^"]+)"[^>]*>/gi;
   let m;
   while((m=re.exec(html))!==null){
-    let href=decodeURIComponent(m[1]);
-    if(href.startsWith('/'))continue; // skip absolute
+    let href=m[1];
+    try{href=decodeURIComponent(href)}catch(e){}
+    if(href==='../'||href==='../'||href==='.'||href==='..') continue;
     if(href.startsWith('?')||href.startsWith('#'))continue;
-    if(href==='../'||href==='../') continue;
-    links.push(href);
+    // Extract just the last path component (handle absolute paths)
+    let name=href.replace(/\/$/,'').split('/').pop();
+    if(!name)continue;
+    // Restore trailing slash if original had one (it's a directory)
+    if(href.endsWith('/'))name+='/';
+    names.push(name);
   }
-  return links;
+  return names;
 }
 
 async function fetchDirListing(url){
   const r=await fetch(url);
   if(!r.ok)return[];
-  return parseLinks(await r.text(),url);
+  const ct=r.headers.get('content-type')||'';
+  const text=await r.text();
+  // If server returns JSON array (some servers do), parse it
+  if(ct.includes('application/json')){
+    try{return JSON.parse(text).map(e=>typeof e==='object'?e.name:String(e))}catch(e){}
+  }
+  return parseLinks(text);
 }
 
 async function scanDir(path){
