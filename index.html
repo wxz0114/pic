@@ -37,6 +37,7 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;font-family:sys
 <script>
 let FILES=[];
 const VIDEO_EXT=/\.(mp4|webm|mov|avi)$/i;
+const MEDIA_EXT=/\.(jpe?g|png|gif|webp|bmp|svg|mp4|webm|mov|avi)$/i;
 const container=document.getElementById('media-container');
 const filenameEl=document.getElementById('filename');
 const counterEl=document.getElementById('counter');
@@ -45,19 +46,63 @@ const dirSelect=document.getElementById('dir-select');
 let filtered=[];
 let idx=0;
 
+// Parse directory listing HTML to extract links
+function parseLinks(html,base){
+  const links=[];
+  const re=/<a\s[^>]*href="([^"]+)"/gi;
+  let m;
+  while((m=re.exec(html))!==null){
+    let href=decodeURIComponent(m[1]);
+    if(href.startsWith('/'))continue; // skip absolute
+    if(href.startsWith('?')||href.startsWith('#'))continue;
+    if(href==='../'||href==='../') continue;
+    links.push(href);
+  }
+  return links;
+}
+
+async function fetchDirListing(url){
+  const r=await fetch(url);
+  if(!r.ok)return[];
+  return parseLinks(await r.text(),url);
+}
+
+async function scanDir(path){
+  const entries=await fetchDirListing(path);
+  const files=[];
+  const subdirs=[];
+  for(const e of entries){
+    if(e.endsWith('/'))subdirs.push(e);
+    else if(MEDIA_EXT.test(e))files.push(path+e);
+  }
+  // Recurse into subdirectories
+  const subs=await Promise.all(subdirs.map(d=>scanDir(path+d)));
+  return files.concat(...subs);
+}
+
 async function loadFiles(){
+  container.innerHTML='<p style="color:#fff;opacity:.6">扫描目录中…</p>';
   try{
-    const r=await fetch('api/files');
-    FILES=await r.json();
+    // Scan from the directory where index.html resides
+    const base='./';
+    const entries=await fetchDirListing(base);
+    const dirs=entries.filter(e=>e.endsWith('/')&&!e.startsWith('.')&&e!=='../');
+    // Scan all subdirectories in parallel
+    const results=await Promise.all(dirs.map(d=>scanDir(base+d)));
+    FILES=results.flat().map(f=>f.replace(/^\.\//,'')).sort();
   }catch(e){
-    container.innerHTML='<p style="color:#fff;padding:20px">无法加载文件列表，请使用 serve.py 启动服务：<br><code>python3 serve.py</code></p>';
+    container.innerHTML='<p style="color:#fff;padding:20px">无法扫描目录。请确保服务器开启了目录列表（autoindex）。</p>';
+    return;
+  }
+  if(!FILES.length){
+    container.innerHTML='<p style="color:#fff;padding:20px">未找到任何图片或视频文件。</p>';
     return;
   }
   // Rebuild directory selector
-  const dirs=[...new Set(FILES.map(f=>f.split('/')[0]))].sort();
+  const allDirs=[...new Set(FILES.map(f=>f.split('/')[0]))].sort();
   const prev=dirSelect.value;
   dirSelect.innerHTML='<option value="__all__">全部</option>';
-  dirs.forEach(d=>{const o=document.createElement('option');o.value=d;o.textContent=d;dirSelect.appendChild(o)});
+  allDirs.forEach(d=>{const o=document.createElement('option');o.value=d;o.textContent=d;dirSelect.appendChild(o)});
   if([...dirSelect.options].some(o=>o.value===prev))dirSelect.value=prev;
   applyFilter();
 }
