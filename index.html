@@ -46,64 +46,38 @@ const dirSelect=document.getElementById('dir-select');
 let filtered=[];
 let idx=0;
 
-// Parse directory listing HTML to extract file/dir names
-function parseLinks(html){
-  const names=[];
-  const re=/<a\s[^>]*href="([^"]+)"[^>]*>/gi;
-  let m;
-  while((m=re.exec(html))!==null){
-    let href=m[1];
-    try{href=decodeURIComponent(href)}catch(e){}
-    if(href==='../'||href==='../'||href==='.'||href==='..') continue;
-    if(href.startsWith('?')||href.startsWith('#'))continue;
-    // Extract just the last path component (handle absolute paths)
-    let name=href.replace(/\/$/,'').split('/').pop();
-    if(!name)continue;
-    // Restore trailing slash if original had one (it's a directory)
-    if(href.endsWith('/'))name+='/';
-    names.push(name);
-  }
-  return names;
-}
+// GitHub API: recursively list files in a directory
+const GH_USER='wxz0114',GH_REPO='pic';
+const API_BASE='https://api.github.com/repos/'+GH_USER+'/'+GH_REPO+'/contents/';
 
-async function fetchDirListing(url){
-  const r=await fetch(url);
+async function ghListDir(path){
+  const r=await fetch(API_BASE+encodeURIComponent(path).replace(/%2F/g,'/'));
   if(!r.ok)return[];
-  const ct=r.headers.get('content-type')||'';
-  const text=await r.text();
-  // If server returns JSON array (some servers do), parse it
-  if(ct.includes('application/json')){
-    try{return JSON.parse(text).map(e=>typeof e==='object'?e.name:String(e))}catch(e){}
+  const items=await r.json();
+  if(!Array.isArray(items))return[];
+  let files=[];
+  const subdirPromises=[];
+  for(const item of items){
+    if(item.type==='file'&&MEDIA_EXT.test(item.name)){
+      files.push(item.path);
+    }else if(item.type==='dir'){
+      subdirPromises.push(ghListDir(item.path));
+    }
   }
-  return parseLinks(text);
+  const subResults=await Promise.all(subdirPromises);
+  return files.concat(...subResults);
 }
 
-async function scanDir(path){
-  const entries=await fetchDirListing(path);
-  const files=[];
-  const subdirs=[];
-  for(const e of entries){
-    if(e.endsWith('/'))subdirs.push(e);
-    else if(MEDIA_EXT.test(e))files.push(path+e);
-  }
-  // Recurse into subdirectories
-  const subs=await Promise.all(subdirs.map(d=>scanDir(path+d)));
-  return files.concat(...subs);
-}
-
-// Known year directories to scan (extend as needed)
+// Known year directories to scan
 const KNOWN_DIRS=['2024','2025','2026','2027','2028'];
 
 async function loadFiles(){
   container.innerHTML='<p style="color:#fff;opacity:.6">扫描目录中…</p>';
   try{
-    // Try each known directory in parallel; skip those that don't exist
-    const results=await Promise.all(KNOWN_DIRS.map(async d=>{
-      try{return await scanDir(d+'/')}catch(e){return[]}
-    }));
+    const results=await Promise.all(KNOWN_DIRS.map(d=>ghListDir(d)));
     FILES=results.flat().sort();
   }catch(e){
-    container.innerHTML='<p style="color:#fff;padding:20px">无法扫描目录。请确保服务器开启了目录列表（autoindex）。</p>';
+    container.innerHTML='<p style="color:#fff;padding:20px">加载失败：'+e.message+'</p>';
     return;
   }
   if(!FILES.length){
