@@ -46,36 +46,31 @@ const dirSelect=document.getElementById('dir-select');
 let filtered=[];
 let idx=0;
 
-// GitHub API: recursively list files in a directory
+// GitHub repo info
 const GH_USER='wxz0114',GH_REPO='pic';
-const API_BASE='https://api.github.com/repos/'+GH_USER+'/'+GH_REPO+'/contents/';
 
-async function ghListDir(path){
-  const r=await fetch(API_BASE+encodeURIComponent(path).replace(/%2F/g,'/'));
-  if(!r.ok)return[];
-  const items=await r.json();
-  if(!Array.isArray(items))return[];
-  let files=[];
-  const subdirPromises=[];
-  for(const item of items){
-    if(item.type==='file'&&MEDIA_EXT.test(item.name)){
-      files.push(item.path);
-    }else if(item.type==='dir'){
-      subdirPromises.push(ghListDir(item.path));
-    }
-  }
-  const subResults=await Promise.all(subdirPromises);
-  return files.concat(...subResults);
+// Use Git Trees API to get entire repo file tree in ONE request
+async function fetchTree(branch){
+  const url='https://api.github.com/repos/'+GH_USER+'/'+GH_REPO+'/git/trees/'+branch+'?recursive=1';
+  const r=await fetch(url);
+  if(!r.ok)return null;
+  return r.json();
 }
-
-// Known year directories to scan
-const KNOWN_DIRS=['2024','2025','2026','2027','2028'];
 
 async function loadFiles(){
   container.innerHTML='<p style="color:#fff;opacity:.6">扫描目录中…</p>';
   try{
-    const results=await Promise.all(KNOWN_DIRS.map(d=>ghListDir(d)));
-    FILES=results.flat().sort();
+    // Try main branch first, then master
+    let data=await fetchTree('main');
+    if(!data)data=await fetchTree('master');
+    if(!data){
+      container.innerHTML='<p style="color:#fff;padding:20px">无法获取仓库文件列表</p>';
+      return;
+    }
+    FILES=data.tree
+      .filter(item=>item.type==='blob'&&MEDIA_EXT.test(item.path))
+      .map(item=>item.path)
+      .sort();
   }catch(e){
     container.innerHTML='<p style="color:#fff;padding:20px">加载失败：'+e.message+'</p>';
     return;
